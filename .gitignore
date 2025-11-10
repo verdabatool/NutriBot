@@ -1,2 +1,4 @@
 .venv/
 Data/
+.idea/
+.DS_Store
