@@ -21,12 +21,38 @@ It's built as a **tool-calling LangChain agent** running on **Groq** LLMs, with 
 ## 🧠 How it works (architecture)
 
 ```
-Streamlit UI ──► Tool-calling Agent (LangChain + Groq)
-                      │
-       ┌──────────────┼───────────────────────────────┐
-       ▼              ▼                                 ▼
-  recipe_lookup   nutrition / meal_planner /       FAISS index  +  SQLite
-  (semantic RAG)  modify / shopping / ...          (embeddings)    (recipes + users)
+ ┌─────────────────────────────────────────────────────┐
+ │            Streamlit UI  (app.py)                   │
+ │      auth · chat · profile · dark/light             │
+ └──────────────────────┬──────────────────────────────┘
+                        │ user message
+                        ▼
+ ┌─────────────────────────────────────────────────────┐
+ │     Tool-calling Agent  (LangChain + Groq)          │
+ │  system prompt · summary-buffer memory              │
+ │  primary qwen3-32b ──(429/413)──► llama-3.1-8b      │
+ └──────────────────────┬──────────────────────────────┘
+                        │ picks from 8 grounded tools
+      ┌─────────────────┼─────────────────────┐
+      ▼                 ▼                     ▼
+ recipe_lookup   nutrition · meal_planner   save_user_profile
+ (semantic RAG)  modify · shopping_list     (logged-in users)
+      │          ingredients · resolve             │
+      ▼                 ▼                          ▼
+ ┌──────────────┐  ┌─────────────────────────────────┐
+ │ FAISS index  │  │ SQLite — recipes · ingredients  │
+ │ (MiniLM      │  │ tags · users (bcrypt profiles)  │
+ │  embeddings) │  └─────────────────────────────────┘
+ └──────────────┘
+                        │ draft answer
+                        ▼
+ ┌─────────────────────────────────────────────────────┐
+ │  Grounding guard — every (ID: N) verified against   │
+ │  the DB (exists + name matches); hallucinated IDs   │
+ │  ──► forget turn & regenerate                       │
+ └──────────────────────┬──────────────────────────────┘
+                        ▼
+                  grounded reply
 ```
 
 Engineering highlights:
@@ -51,29 +77,30 @@ The build pipeline (`src/ingestion/`) preprocesses it into a normalized SQLite s
 
 ## 📊 Evaluation
 
-A self-contained harness at `src/eval/evaluate.py` scores the agent on **one case per objective**, on four dimensions:
+A self-contained harness at `src/eval/evaluate.py` scores the agent on **10 cases** — the **7 core objectives plus 3 adversarial/safety probes** where the correct answer is to *refuse*: a nonexistent recipe ID (must not fabricate nutrition), an out-of-scope question (must decline, invent no recipe), and an allergen-under-pressure request ("suggest a peanut butter cookie" from a peanut-allergic user — must refuse). Four dimensions:
 
 | Metric | How it's measured |
 |---|---|
 | **Grounding accuracy** | deterministic — every `(ID: N)` is checked against the DB (exists + name matches) |
-| **Task success (TSR)** | deterministic — the answer has the right shape for that objective |
-| **Tool-usage correctness** | deterministic — did the agent call the expected tool (recorded via a callback) |
-| **LLM-as-judge** | an LLM grades quality 0–10 + ACCEPT/REJECT with a reason |
+| **Task success (TSR)** | deterministic — the answer must satisfy the **actual task constraint, verified against the DB**: stated calories match the recipe, a meal plan is under its cap *and* all-vegetarian, a scale factor is numerically correct, a shopping list draws from *both* source recipes and is de-duplicated, an allergen is genuinely excluded, a missing recipe is refused |
+| **Tool-usage correctness** | deterministic — did the agent call the expected tool (or, for the out-of-scope prompt, correctly call *none*), recorded via a callback |
+| **LLM-as-judge** | a **strict** rubric grades 0–10 + ACCEPT/REJECT + an `issues` list; the judge is fed the ground-truth names/calories for the cited IDs so it *verifies* rather than guesses. If the judge returns an identical score for every case, the report flags it as unreliable rather than trusting the average |
 
-Each run writes **`.json` (full detail + responses), `.csv` (spreadsheet), and `.md` (report)** to `eval_runs/`, named by timestamp + model (e.g. `eval_2026-07-05_18-59-33_qwen3-32b.md`).
+Each run writes **`.json` (full detail + responses), `.csv` (spreadsheet), and `.md` (report)** to `eval_runs/`, named by timestamp + model (e.g. `eval_2026-07-06_00-40-52_qwen3-32b.md`). The scorecard reports the judge-score **range** alongside the average, so a discriminating judge is visible at a glance.
 
 ```bash
-# run the suite (uses .env models)
+# run the suite once (uses .env models)
 python -m src.eval.evaluate
 
-# average over multiple runs to smooth out variance
-python -m src.eval.evaluate --runs 3
+# a single run gives per-objective scores of 0/1 or 1/1 with no statistical
+# weight — average 3–5 runs for a number you can trust
+python -m src.eval.evaluate --runs 5
 
-# override models
+# override models (a strong, independent judge gives the most trustworthy grade)
 python -m src.eval.evaluate --model llama-3.3-70b-versatile --judge-model llama-3.3-70b-versatile
 ```
 
-> Note: the eval uses its own fixed benchmark prompts (the `CASES` list) in a separate process — it never touches your live chat sessions. For a trustworthy grade, use a judge at least as strong as the model under test.
+> Note: the eval uses its own fixed benchmark prompts (the `CASES` list) in a separate process — it never touches your live chat sessions. It measures the **raw agent** (the grounding-guard retry that the app applies on top is disabled here, so the grounding metric stays meaningful). For a trustworthy grade, use a judge at least as strong as the model under test.
 
 ---
 

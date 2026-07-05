@@ -3,17 +3,17 @@ from __future__ import annotations
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.agent.react_agent import build_agent
+from src.agent import ChatPipeline
 
 
 def run():
     print("NutriChat (agentic + grounded) — type 'exit' to quit\n")
 
-    agent = build_agent()
+    pipeline = ChatPipeline()
 
     # Stable thread id = persistent memory for this run.
     # Change this if you want a "fresh chat".
-    config = {"configurable": {"thread_id": "nutrichat-local-1"}}
+    thread_id = "nutrichat-local-1"
 
     while True:
         user = input("You: ").strip()
@@ -22,19 +22,7 @@ def run():
         if not user:
             continue
 
-        result = agent.invoke(
-            {"input": user},
-            config=config,
-        )
-
-        if isinstance(result, dict) and "output" in result:
-            content = result["output"]
-        elif isinstance(result, dict) and "messages" in result:
-            last = result["messages"][-1]
-            content = getattr(last, "content", None) or getattr(last, "text", None) or str(last)
-        else:
-            content = str(result)
-
+        content = pipeline.answer(user, thread_id=thread_id)
         print(f"\nBot: {content}\n")
 
 
