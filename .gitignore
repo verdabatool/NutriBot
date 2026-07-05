@@ -1,0 +1,47 @@
+# --- Secrets: never commit ---
+.env
+.env-temp
+.env.local
+*.key
+.streamlit/secrets.toml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Virtual environments ---
+.venv/
+.venv1/
+venv/
+env/
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- Claude Code (AI assistant) local config ---
+.claude/
+
+# --- Built data & large artifacts (regenerate with the build scripts) ---
+Data/raw/*
+Data/processed/*
+Data/db/*
+Data/vectorstore/*
+!Data/**/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+*.faiss
+*.pkl
+identifier.sqlite
+
+# --- Model / HF caches (downloaded at runtime) ---
+.cache/
+
+# --- Evaluation outputs (generated) ---
+eval_runs/*
+!eval_runs/.gitkeep
