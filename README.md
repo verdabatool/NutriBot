@@ -1,6 +1,6 @@
 # 🥗 NutriChat — Grounded Recipe & Nutrition Assistant
 
-NutriChat is an **agentic, retrieval-grounded chatbot** that helps users find recipes, answer cooking questions, analyze nutrition, plan meals, and build shopping lists — all backed by a real database of **231,637 recipes** (Food.com). Every recipe, ID, ingredient, step, and nutrition value it states comes from the data, not the model's imagination.
+NutriChat is an **agentic, retrieval-grounded chatbot** that helps users find recipes, answer cooking questions, analyze nutrition, plan meals, and build shopping lists — all backed by a real database of **231,637 recipes** [Food.com](https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions?select=RAW_recipes.csv). Every recipe, ID, ingredient, step, and nutrition value it states comes from the data, not the model's imagination.
 
 It's built as a **tool-calling LangChain agent** running on **Groq** LLMs, with a **FAISS + SQLite** RAG layer and a **Streamlit** interface (register/login, per-user profiles, dark/light mode).
 
@@ -8,13 +8,13 @@ It's built as a **tool-calling LangChain agent** running on **Groq** LLMs, with 
 
 ## ✨ What it does (objectives covered)
 
-1. **Recipe Q&A** — answers specific questions ("How long do I bake lasagna?"). If a question applies to many recipes, it asks you to clarify; if a detail is missing from the data, it says so and reasons from general knowledge (clearly labeled).
-2. **Ingredient-based suggestions** — the "what's in my fridge" problem: give it what you have and it ranks recipes by how many of your ingredients they use.
-3. **Nutritional analysis** — calories + **macros in grams** (protein/carbs/fat…) per serving, and a meal total, converted from the dataset's %DV.
-4. **Weekly meal planning** — a full multi-day plan with **breakfast/lunch/dinner** each matched to the right meal type, honoring **diet** (vegetarian/vegan/…) and a **per-day calorie target**.
-5. **Recipe modification & scaling** — "make it gluten-free" or "scale from 6 servings to 2" (returns a scale factor + grounded, clearly-labeled substitutions).
-6. **Shopping list** — a consolidated, de-duplicated list from a meal plan or a set of recipes.
-7. **Persistent profiles** — remembers **allergies, diet, and health goals** (stored in the DB, bcrypt-hashed passwords), excludes allergens from results, and can save new preferences stated in chat.
+1. **Recipe Q&A:** Answers specific questions ("How long do I bake lasagna?"). If a question applies to many recipes, it asks you to clarify; if a detail is missing from the data, it says so and reasons from general knowledge (clearly labeled).
+2. **Ingredient-based suggestions:** The "what's in my fridge" problem: give it what you have and it ranks recipes by how many of your ingredients they use.
+3. **Nutritional analysis:** Calories + **macros in grams** (protein/carbs/fat…) per serving, and a meal total, converted from the dataset's %DV.
+4. **Weekly meal planning:** A full multi-day plan with **breakfast/lunch/dinner** each matched to the right meal type, honoring **diet** (vegetarian/vegan/…) and a **per-day calorie target**.
+5. **Recipe modification & scaling:** "Make it gluten-free" or "scale from 6 servings to 2" (returns a scale factor + grounded, clearly-labeled substitutions).
+6. **Shopping list:** A consolidated, de-duplicated list from a meal plan or a set of recipes.
+7. **Persistent profiles:** Remembers **allergies, diet, and health goals** (stored in the DB, bcrypt-hashed passwords), excludes allergens from results, and can save new preferences stated in chat.
 
 ---
 
