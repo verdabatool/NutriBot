@@ -201,10 +201,18 @@ def _wrap_tool(fn, tool_name: str):
             if tool_name == "shopping_list":
                 if isinstance(raw, dict) and raw.get("items"):
                     counts = raw.get("items_by_recipe_count") or {}
-                    out = [
-                        f"Shopping list ({raw.get('item_count', len(raw['items']))} "
-                        f"items from {raw.get('recipe_count', '?')} recipes):"
-                    ]
+                    # Name the SOURCE recipes (with IDs) so the answer stays grounded.
+                    src = raw.get("source_recipes") or []
+                    n_items = raw.get("item_count", len(raw["items"]))
+                    if src:
+                        names = ", ".join(
+                            f"{_format_recipe_name(r.get('name') or '')} (ID: {r.get('recipe_id')})"
+                            for r in src
+                        )
+                        header = f"Shopping list ({n_items} items) for {names}:"
+                    else:
+                        header = f"Shopping list ({n_items} items from {raw.get('recipe_count', '?')} recipes):"
+                    out = [header]
                     for it in raw["items"]:
                         c = counts.get(it)
                         out.append(f"- {it}" + (f" (in {c} recipes)" if c and c > 1 else ""))

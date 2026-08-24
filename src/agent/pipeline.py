@@ -18,7 +18,7 @@ from typing import Callable, List, Optional
 from langchain_groq import ChatGroq
 
 from src.agent.agent import build_agent, FALLBACK_MODEL
-from src.agent.grounding import ungrounded_ids
+from src.agent.grounding import ungrounded_ids, allergen_hits
 from src.agent.memory import forget_last_turn
 
 # Trim very long input to reduce token usage (avoid Groq 413 request-too-large).
@@ -60,7 +60,8 @@ def _status_code(exc: BaseException):
 
 
 def classify_error(exc: BaseException) -> Optional[str]:
-    """Bucket an invoke failure as 'rate_limit', 'overflow', 'locked', or None."""
+    """Bucket an invoke failure as 'rate_limit', 'overflow', 'model_unavailable',
+    'locked', or None."""
     try:
         import groq
     except Exception:
@@ -72,6 +73,11 @@ def classify_error(exc: BaseException) -> Optional[str]:
             return "rate_limit"
         if code == 413:
             return "overflow"
+        # A 404 means the configured model id is gone or off-limits (e.g. Groq
+        # decommissioned it) — recover by falling back to the light model rather
+        # than failing every message with a generic apology.
+        if code == 404 or (groq is not None and isinstance(e, groq.NotFoundError)):
+            return "model_unavailable"
         # SQLite has no distinct "locked" exception subclass — it is an
         # OperationalError identified by its message.
         if type(e).__name__ == "OperationalError" and "locked" in str(e).lower():
@@ -83,6 +89,8 @@ def classify_error(exc: BaseException) -> Optional[str]:
         return "rate_limit"
     if any(t in msg for t in ("413", "request too large", "too large")):
         return "overflow"
+    if any(t in msg for t in ("model_not_found", "does not exist or you do not have access", "404")):
+        return "model_unavailable"
     if "locked" in msg:
         return "locked"
     return None
@@ -194,6 +202,21 @@ _GUARD_RETRY_NUDGE = (
     "the real recipe names and IDs it returns. Never invent IDs.]"
 )
 
+# LangChain's sentinel when the agent loops without producing a final answer.
+_ITER_LIMIT_SENTINEL = "stopped due to max iterations"
+
+# Parse the user's allergens out of the USER CONTEXT string the UI/eval passes,
+# e.g. "ALLERGIES (never suggest these): peanuts, shellfish | Diet: vegan".
+_ALLERGY_RE = re.compile(r"allerg\w*[^:]*:\s*([^|]+)", re.IGNORECASE)
+
+
+def parse_allergens(user_preference: str) -> List[str]:
+    """Extract the allergen list from the USER CONTEXT string (empty if none)."""
+    m = _ALLERGY_RE.search(user_preference or "")
+    if not m:
+        return []
+    return [a.strip() for a in re.split(r"[,;/]", m.group(1)) if a.strip()]
+
 
 class ChatPipeline:
     """Turns user text into a clean, grounded answer.
@@ -254,11 +277,14 @@ class ChatPipeline:
         except Exception as e:
             traceback.print_exc()
             kind = classify_error(e)
-            if kind in ("rate_limit", "overflow"):
-                # The lighter fallback model handles both a rate limit and a
-                # request too large for the primary model.
+            if kind in ("rate_limit", "overflow", "model_unavailable"):
+                # The lighter fallback model handles a rate limit, a request too
+                # large for the primary model, or a primary model that is gone /
+                # off-limits (404 — e.g. Groq decommissioned the configured id).
                 try:
-                    status(f"Main model busy — retrying on {FALLBACK_MODEL}…")
+                    note = ("Main model unavailable" if kind == "model_unavailable"
+                            else "Main model busy")
+                    status(f"{note} — retrying on {FALLBACK_MODEL}…")
                     output = self._invoke(
                         self._fallback_agent(), text, thread_id, user_preference, callbacks
                     )
@@ -266,8 +292,9 @@ class ChatPipeline:
                     traceback.print_exc()
                     if raise_errors:
                         raise
-                    return ("⏳ **Usage limit reached** and the fallback model is also "
-                            "unavailable right now. Please wait a few minutes and try again.")
+                    return ("⏳ **The main model is unavailable** and the fallback model "
+                            "is also unreachable right now. Please wait a few minutes and "
+                            "try again.")
             elif kind == "locked":
                 if raise_errors:
                     raise
@@ -283,6 +310,21 @@ class ChatPipeline:
         # --- Grounding guard: never let fabricated recipe IDs reach the user ---
         if guard and ungrounded_ids(output):
             output = self._run_guard(text, thread_id, user_preference, callbacks, status)
+
+        # --- Allergen guard: never let a cited recipe contain a known allergen.
+        # This is deterministic (checked against the DB), so safety does not depend
+        # on the model remembering to pass exclude=[...] to a tool.
+        allergens = parse_allergens(user_preference)
+        if guard and allergens and allergen_hits(output, allergens):
+            output = self._run_allergen_guard(
+                text, thread_id, user_preference, allergens, callbacks, status
+            )
+
+        # --- Never surface LangChain's raw "max iterations" sentinel ---
+        if _ITER_LIMIT_SENTINEL in (output or "").lower():
+            return ("I couldn't pin that down in a few tries. Could you narrow it a "
+                    "little — name the dish or give its recipe ID — and I'll get you a "
+                    "grounded answer?")
 
         answer = sanitize_answer(output)
 
@@ -316,3 +358,31 @@ class ChatPipeline:
             traceback.print_exc()
             return ("I caught myself about to answer from memory instead of the "
                     "database. Please ask again and I'll pull grounded recipes.")
+
+    def _run_allergen_guard(self, text, thread_id, user_preference, allergens,
+                            callbacks, status) -> str:
+        """A cited recipe actually contains one of the user's allergens: purge that
+        turn and retry once, forcing the model to exclude the allergens. If the
+        retry is still unsafe, refuse rather than serve an allergen."""
+        alg = ", ".join(allergens)
+        forget_last_turn(thread_id)
+        nudge = (
+            f"\n\n[SAFETY: the user is ALLERGIC to {alg}. Do NOT recommend any recipe "
+            f"containing these. Call recipe_lookup with exclude={allergens} and "
+            f"suggest ONLY recipes whose ingredients are free of them. If the request "
+            f"itself asks for one of these ingredients, briefly decline and offer an "
+            f"allergen-free alternative instead — do not keep searching.]"
+        )
+        try:
+            status("Double-checking this is allergy-safe…")
+            retry = self._invoke(self.agent, text + nudge, thread_id, user_preference, callbacks)
+            if _ITER_LIMIT_SENTINEL in (retry or "").lower():
+                raise RuntimeError("iteration limit on allergen retry")
+            if not allergen_hits(retry, allergens):
+                return retry
+            forget_last_turn(thread_id)
+        except Exception:
+            traceback.print_exc()
+        return (f"I can't recommend that — the options I found contain {alg}, which "
+                f"you're allergic to. Want me to look for {alg}-free alternatives "
+                f"instead?")

@@ -1,24 +1,9 @@
 # src/tools/meal_planner.py
 
 from typing import List, Optional
-from pydantic import BaseModel, Field
 
 from src.db.recipes import get_recipes_by_ids, exclude_ingredients
 from src.tools.registry import ToolSpec, register_tool
-
-
-# --------------------------------------------------
-# Input schema
-# --------------------------------------------------
-
-class MealPlannerInput(BaseModel):
-    days: int = Field(..., ge=1, le=14)
-    candidate_recipe_ids: Optional[List[int]] = None
-    calorie_target: Optional[int] = None
-    diet_type: Optional[str] = None
-    meals_per_day: int = Field(default=3, ge=1, le=6)
-    query: Optional[str] = None
-    exclude: Optional[List[str]] = None
 
 
 # Diet values that impose no restriction.

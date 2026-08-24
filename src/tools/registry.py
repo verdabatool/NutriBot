@@ -1,5 +1,5 @@
 # src/tools/registry.py
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Dict, Literal
 
 ToolKind = Literal[
@@ -18,8 +18,6 @@ class ToolSpec:
     description: str
     callable: Callable
     kind: ToolKind = "retrieval"
-    version: str = "1.0"
-    tags: Dict[str, str] = field(default_factory=dict)
 
 
 TOOL_REGISTRY: Dict[str, ToolSpec] = {}

@@ -2,24 +2,10 @@
 
 from typing import List, Dict, Optional
 from collections import Counter
-from pydantic import BaseModel, Field
 import json
 
 from src.db.recipes import get_recipes_by_ids
 from src.tools.registry import ToolSpec, register_tool
-
-
-# --------------------------------------------------
-# Input schema
-# --------------------------------------------------
-
-class ShoppingListInput(BaseModel):
-    recipe_ids: Optional[List[int]] = Field(
-        default=None, description="Recipe ids to build the shopping list from"
-    )
-    days: Optional[List[Dict]] = Field(
-        default=None, description="A meal_planner 'days' list (entries with recipe_id)"
-    )
 
 
 def _empty(note: str) -> dict:
@@ -88,15 +74,23 @@ def shopping_list(
     items = sorted(counts.keys())
     items_by_recipe_count = {ing: counts[ing] for ing in items}
 
+    # Carry the SOURCE recipes (id + name) so the answer can cite the real
+    # database recipes the list was built from — otherwise the list has no
+    # verifiable database reference.
+    source_recipes = [
+        {"recipe_id": int(row["recipe_id"]), "name": row.get("name")}
+        for _, row in df.iterrows()
+    ]
+
     return {
         "type": "shopping_list",
         "recipe_count": int(df.shape[0]),
+        "source_recipes": source_recipes,
         "item_count": len(items),
         "items": items,
         "items_by_recipe_count": items_by_recipe_count,
         "assumptions": [
             "Ingredients were consolidated (de-duplicated) across all recipes.",
-            "Quantities are not included — the dataset stores ingredient names only.",
         ],
     }
 
@@ -105,13 +99,6 @@ def shopping_list(
 # Registration
 # --------------------------------------------------
 
-# register_tool(
-#     ToolSpec(
-#         name="shopping_list",
-#         description="Generate a shopping list from a meal plan.",
-#         callable=shopping_list,
-#     )
-# )
 register_tool(
     ToolSpec(
         name="shopping_list",

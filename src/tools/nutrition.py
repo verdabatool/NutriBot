@@ -1,18 +1,9 @@
 # src/tools/nutrition.py
 
 from typing import List
-from pydantic import BaseModel, Field
 
 from src.db.recipes import get_recipes_by_ids
 from src.tools.registry import ToolSpec, register_tool
-
-
-# --------------------------------------------------
-# Input schema
-# --------------------------------------------------
-
-class NutritionAnalyzerInput(BaseModel):
-    recipe_ids: List[int] = Field(..., min_items=1)
 
 
 # --------------------------------------------------
@@ -118,13 +109,6 @@ def nutrition_analyzer(recipe_ids: List[int], **kwargs) -> dict:
 # Registration
 # --------------------------------------------------
 
-# register_tool(
-#     ToolSpec(
-#         name="nutrition_analyzer",
-#         description="Compute nutrition totals for recipes.",
-#         callable=nutrition_analyzer,
-#     )
-# )
 register_tool(
     ToolSpec(
         name="nutrition_analyzer",

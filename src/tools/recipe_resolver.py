@@ -50,17 +50,16 @@ def resolve_recipe_by_name(name: str) -> Dict[str, Any]:
     }
 
 
-# register_tool(
-#     ToolSpec(
-#         name="resolve_recipe_by_name",
-#         description="Resolve a recipe name to a recipe_id.",
-#         callable=resolve_recipe_by_name,
-#     )
-# )
 register_tool(
     ToolSpec(
         name="resolve_recipe_by_name",
-        description="Resolve a recipe name to a recipe_id.",
+        description=(
+            "Look up a recipe_id ONLY when the USER names a specific dish and you "
+            "don't already have its ID. Do NOT use this on recipes that recipe_lookup "
+            "or ingredient_suggester just returned — those already include each "
+            "recipe's (ID: N), so calling this afterward is redundant. Never call it "
+            "more than once for the same name."
+        ),
         callable=resolve_recipe_by_name,
         kind="resolver",
     )

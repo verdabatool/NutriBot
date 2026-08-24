@@ -1,17 +1,7 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field
 
 from src.retrieval.recipe_retriever import retrieve_recipes
 from src.tools.registry import ToolSpec, register_tool
-
-
-# --------------------------------------------------
-# Input schema
-# --------------------------------------------------
-
-class RecipeLookupInput(BaseModel):
-    query: str = Field(..., min_length=1)
-    k: int = Field(default=5, ge=1, le=20)
 
 
 # --------------------------------------------------
@@ -56,16 +46,6 @@ def recipe_lookup(query: str, k: int = 5, exclude: Optional[List[str]] = None, *
 # --------------------------------------------------
 # Registration
 # --------------------------------------------------
-
-# register_tool(
-#     ToolSpec(
-#         name="recipe_lookup",
-#         description="Find recipes using semantic search."
-#                     "REQUIRED for any recipe suggestions. "
-#                     "Returns the ONLY valid recipe names the assistant may mention.",
-#         callable=recipe_lookup,
-#     )
-# )
 
 register_tool(
     ToolSpec(

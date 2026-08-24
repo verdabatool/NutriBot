@@ -1,24 +1,10 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field
 
 from src.db.recipes import (
     get_recipes_with_any_ingredients,
     exclude_ingredients,  # allergen exclusion
 )
 from src.tools.registry import ToolSpec, register_tool
-
-
-# --------------------------------------------------
-# Input schema
-# --------------------------------------------------
-
-class IngredientSuggesterInput(BaseModel):
-    ingredients: Optional[List[str]] = Field(
-        default=None,
-        description="Ingredients the user has available"
-    )
-    k: int = Field(default=5, ge=1, le=20)
-    semantic_rerank: bool = True
 
 
 # --------------------------------------------------
@@ -59,7 +45,6 @@ def _sanitize_records(records: List[dict]) -> List[dict]:
 def ingredient_suggester(
     ingredients: Optional[List[str]] = None,
     k: int = 5,
-    semantic_rerank: bool = True,
     exclude: Optional[List[str]] = None,
     **kwargs,
 ) -> dict:

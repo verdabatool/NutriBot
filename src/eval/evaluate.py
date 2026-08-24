@@ -42,6 +42,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_groq import ChatGroq
 
 from src.agent import ChatPipeline, ungrounded_ids
+from src.agent.grounding import ID_MARKER_RE
 from src.db.recipes import get_recipes_by_ids
 
 
@@ -62,7 +63,9 @@ class ToolRecorder(BaseCallbackHandler):
 # Ground-truth helpers — verify answers against the DB, not just their shape
 # --------------------------------------------------
 def _ids(text: str) -> List[int]:
-    return [int(x) for x in re.findall(r"\(ID:\s*(\d+)\)", text)]
+    # Shared, markdown-tolerant marker regex so the eval sees exactly the same ids
+    # the grounding/allergen guards do (e.g. "(ID: **123**)").
+    return [int(x) for x in ID_MARKER_RE.findall(text)]
 
 
 def _recipe_row(rid):
@@ -143,9 +146,16 @@ def _stated_factor(t: str) -> Optional[float]:
 
 
 def _day_totals(t: str) -> List[int]:
+    """Extract each day's total calories, accepting both formats a model uses:
+    an explicit "... total ... N" line, OR a per-day header that carries the sum,
+    e.g. "**Day 1 (~1,495 kcal)**". (A per-meal line like "Breakfast: ... 657 kcal"
+    is not a day header, so it is not picked up.)"""
     out = []
     for ln in t.splitlines():
-        if re.search(r"(?i)\btotal\b", ln):
+        low = ln.lower()
+        is_total_line = bool(re.search(r"\btotal\b", low))
+        is_day_header = bool(re.search(r"\bday\s*\d", low)) and bool(re.search(r"\d{3,4}\s*k?cal", low))
+        if is_total_line or is_day_header:
             nums = re.findall(r"\d{3,4}", ln.replace(",", ""))
             if nums:
                 out.append(int(nums[-1]))
@@ -491,7 +501,9 @@ def run(model: Optional[str], judge_model: str, runs: int = 1) -> None:
     out_dir.mkdir(exist_ok=True)
     from src.agent import DEFAULT_MODEL
     actual_model = model or DEFAULT_MODEL
-    model_slug = re.sub(r"[^a-z0-9.]+", "-", actual_model.split("/")[-1].lower()).strip("-")
+    # Keep the slug dot-free: a dot (e.g. "qwen3.6-27b") makes Path.with_suffix()
+    # below treat ".6-27b" as the extension and clip it from the saved filenames.
+    model_slug = re.sub(r"[^a-z0-9]+", "-", actual_model.split("/")[-1].lower()).strip("-")
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     runtag = f"_x{runs}" if runs > 1 else ""
     stem = out_dir / f"eval_{ts}_{model_slug}{runtag}"

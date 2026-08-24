@@ -1,6 +1,4 @@
 from sqlalchemy import create_engine, text
-from pathlib import Path
-import pandas as pd
 
 from src.config.settings import DB_PATH
 

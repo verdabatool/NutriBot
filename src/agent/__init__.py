@@ -8,7 +8,7 @@ Public API:
   - DEFAULT_MODEL / FALLBACK_MODEL : configured Groq model ids.
 """
 from src.agent.agent import build_agent, DEFAULT_MODEL, FALLBACK_MODEL
-from src.agent.grounding import ungrounded_ids
+from src.agent.grounding import ungrounded_ids, allergen_hits
 from src.agent.memory import forget_last_turn
 from src.agent.pipeline import ChatPipeline
 
@@ -16,6 +16,7 @@ __all__ = [
     "ChatPipeline",
     "build_agent",
     "ungrounded_ids",
+    "allergen_hits",
     "forget_last_turn",
     "DEFAULT_MODEL",
     "FALLBACK_MODEL",
