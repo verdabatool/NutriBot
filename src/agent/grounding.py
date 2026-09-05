@@ -103,3 +103,36 @@ def allergen_hits(text: str, allergens: List[str]) -> List[int]:
         if any(pattern.search(str(ing).lower()) for ing in ings):
             hits.append(rid)
     return hits
+
+
+def diet_hits(text: str, forbidden: List[str]) -> List[int]:
+    """Return recipe ids cited in the text whose REAL ingredients contain a term
+    forbidden by the user's diet (e.g. meat/fish for vegetarian).
+
+    Unlike allergen_hits, matching is PRECISE (whole word, optional plural) — a
+    diet guard that wrongly rejects a valid recipe is worse than missing an edge
+    case, so "egg" must not match "eggplant" nor "butter" match "butternut". The
+    caller supplies the forbidden terms (see tools.diet.diet_forbidden_ingredients);
+    an empty/unknown-diet list means no check runs.
+    """
+    text = str(text or "")
+    terms = [re.escape((t or "").strip().lower()) for t in forbidden if (t or "").strip()]
+    if not terms or "ID:" not in text:
+        return []
+    try:
+        from src.db.recipes import get_recipe_ingredients
+    except Exception:
+        return []
+
+    pattern = re.compile(r"\b(" + "|".join(terms) + r")s?\b")
+
+    hits: List[int] = []
+    for m in ID_MARKER_RE.finditer(text):
+        rid = int(m.group(1))
+        try:
+            ings = get_recipe_ingredients(rid)
+        except Exception:
+            continue  # can't check -> don't block
+        if any(pattern.search(str(ing).lower()) for ing in ings):
+            hits.append(rid)
+    return hits

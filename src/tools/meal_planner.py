@@ -3,12 +3,11 @@
 from typing import List, Optional
 
 from src.db.recipes import get_recipes_by_ids, exclude_ingredients
+from src.tools.diet import (
+    diet_forbidden_ingredients, diet_tags, is_restricted, is_known_diet,
+)
 from src.tools.registry import ToolSpec, register_tool
 
-
-# Diet values that impose no restriction.
-NO_RESTRICTION = {"", "non-vegetarian", "non vegetarian", "nonveg",
-                  "none", "any", "no preference", "omnivore", "no restriction"}
 
 # Meal-type -> tag keywords used to pick a suitable recipe for each slot.
 # (The dataset has no 'dinner' tag, so 'main-dish' stands in for dinner.)
@@ -35,10 +34,17 @@ def _day_slots(meals_per_day: int) -> List[str]:
     return ["Breakfast", "Lunch", "Dinner"] + [f"Snack {i}" for i in range(1, meals_per_day - 2)]
 
 
-def _rows(df, diet_active: bool, diet: str) -> List[dict]:
-    """Diet-filter a DataFrame and return light recipe dicts (id, name, cal, tags)."""
-    if diet_active and not df.empty and "tags_json" in df.columns:
-        m = df["tags_json"].fillna("").str.lower().str.contains(diet.lower(), regex=False)
+def _rows(df, diet_active: bool, tags: List[str]) -> List[dict]:
+    """Return light recipe dicts (id, name, cal, tags), PREFERRING recipes whose
+    tags positively mark them as diet-compliant.
+
+    Note: this is only a *preference* toward tagged recipes — the hard diet
+    guarantee (no forbidden ingredients) is enforced separately via
+    exclude_ingredients before rows ever get here, so an untagged-but-clean recipe
+    is still safe to keep."""
+    if diet_active and tags and not df.empty and "tags_json" in df.columns:
+        low = df["tags_json"].fillna("").str.lower()
+        m = low.apply(lambda s: any(t in s for t in tags))
         if m.any():
             df = df[m]
     out = []
@@ -91,21 +97,35 @@ def meal_planner(
             base_types.append(bt)
 
     diet = (diet_type or "").strip()
-    diet_active = bool(diet) and diet.lower() not in NO_RESTRICTION
+    diet_active = is_restricted(diet)
     assumptions: List[str] = []
+
+    # Deterministic diet enforcement: forbidden ingredients are excluded the same
+    # way allergens are (word-boundary match against each recipe's real
+    # ingredients), so e.g. a "vegan" plan can never include chicken/tuna/milk —
+    # regardless of whether a recipe happened to be tagged. Combined with the
+    # caller's allergen `exclude`.
+    diet_bans = diet_forbidden_ingredients(diet) if diet_active else []
+    tags = diet_tags(diet) if diet_active else []
+    all_exclude = list(exclude or []) + diet_bans
+    if diet_active and not is_known_diet(diet):
+        assumptions.append(
+            f"'{diet}' isn't a diet I can enforce by ingredient, so I matched on "
+            f"recipe tags only — double-check each recipe fits."
+        )
 
     try:
         from src.retrieval.recipe_retriever import retrieve_recipes
     except Exception:
         retrieve_recipes = None
 
-    # If caller supplied recipes, use them (allergen-filtered); else fetch per type.
+    # If caller supplied recipes, use them (allergen + diet filtered); else fetch per type.
     provided_rows = None
     if candidate_recipe_ids:
         dfp = get_recipes_by_ids(candidate_recipe_ids)
-        if exclude:
-            dfp = exclude_ingredients(dfp, exclude)
-        provided_rows = _rows(dfp, diet_active, diet)
+        if all_exclude:
+            dfp = exclude_ingredients(dfp, all_exclude)
+        provided_rows = _rows(dfp, diet_active, tags)
 
     # ---- Build a candidate pool per meal type ----
     pools: dict = {}
@@ -116,9 +136,11 @@ def meal_planner(
             rows = provided_rows
         elif retrieve_recipes is not None:
             base_q = (query or "").strip()
-            q = f"{base_q} {bt}".strip() if base_q else (f"{diet} {bt}".strip() if diet_active else bt)
-            ids = retrieve_recipes(query=q, k=40, exclude=exclude).recipe_ids
-            rows = _rows(get_recipes_by_ids(ids), diet_active, diet) if ids else []
+            # Bias retrieval toward the diet by naming it in the query, and filter
+            # forbidden ingredients (diet + allergens) out of the candidates.
+            q = " ".join(x for x in [diet if diet_active else "", base_q, bt] if x).strip()
+            ids = retrieve_recipes(query=q, k=40, exclude=all_exclude).recipe_ids
+            rows = _rows(get_recipes_by_ids(ids), diet_active, tags) if ids else []
         else:
             rows = []
 
@@ -138,8 +160,17 @@ def meal_planner(
         pools[bt] = pool
 
     if all(not p for p in pools.values()):
-        return _empty("Could not find suitable recipes for the plan. Try a broader "
-                      "query or a different diet_type.")
+        note = ("Could not find suitable recipes for the plan. Try a broader "
+                "query or a different diet_type.")
+        if diet_active:
+            note = (f"Could not find enough {diet}-compliant recipes for this plan. "
+                    f"Try a broader query.")
+        return _empty(note)
+    if diet_active:
+        assumptions.append(
+            f"Every recipe is {diet}-compliant — recipes containing "
+            f"{diet}-incompatible ingredients were excluded."
+        )
     if relaxed:
         assumptions.append(
             "Meal-type matching was relaxed for: " + ", ".join(relaxed) +
@@ -215,9 +246,11 @@ register_tool(
             "over several days, with optional calorie/diet constraints. It finds "
             "its own recipes (breakfast recipes for breakfast, lunch for lunch, "
             "dinner for dinner) — just call it with days, meals_per_day (default "
-            "3), calorie_target (per day), diet_type (e.g. 'vegetarian'; "
-            "'non-vegetarian'/'any' = no restriction), and optionally query or "
-            "exclude (allergens). candidate_recipe_ids is optional. Returns a "
+            "3), calorie_target (per day), diet_type (e.g. 'vegetarian', 'vegan', "
+            "'pescatarian', 'gluten-free', 'dairy-free', 'keto', 'paleo'; "
+            "'non-vegetarian'/'any' = no restriction — the diet is strictly "
+            "enforced by excluding incompatible ingredients), and optionally query "
+            "or exclude (allergens). candidate_recipe_ids is optional. Returns a "
             "'days' list (one entry per meal) that can be passed to shopping_list, "
             "plus per-day calorie totals."
         ),

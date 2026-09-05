@@ -18,8 +18,9 @@ from typing import Callable, List, Optional
 from langchain_groq import ChatGroq
 
 from src.agent.agent import build_agent, FALLBACK_MODEL
-from src.agent.grounding import ungrounded_ids, allergen_hits
+from src.agent.grounding import ungrounded_ids, allergen_hits, diet_hits
 from src.agent.memory import forget_last_turn
+from src.tools.diet import diet_forbidden_ingredients, is_restricted
 
 # Trim very long input to reduce token usage (avoid Groq 413 request-too-large).
 MAX_INPUT_CHARS = 600
@@ -205,9 +206,10 @@ _GUARD_RETRY_NUDGE = (
 # LangChain's sentinel when the agent loops without producing a final answer.
 _ITER_LIMIT_SENTINEL = "stopped due to max iterations"
 
-# Parse the user's allergens out of the USER CONTEXT string the UI/eval passes,
-# e.g. "ALLERGIES (never suggest these): peanuts, shellfish | Diet: vegan".
+# Parse the user's allergens/diet out of the USER CONTEXT string the UI/eval
+# passes, e.g. "ALLERGIES (never suggest these): peanuts, shellfish | Diet: vegan".
 _ALLERGY_RE = re.compile(r"allerg\w*[^:]*:\s*([^|]+)", re.IGNORECASE)
+_DIET_RE = re.compile(r"\bdiet\b[^:]*:\s*([^|]+)", re.IGNORECASE)
 
 
 def parse_allergens(user_preference: str) -> List[str]:
@@ -216,6 +218,12 @@ def parse_allergens(user_preference: str) -> List[str]:
     if not m:
         return []
     return [a.strip() for a in re.split(r"[,;/]", m.group(1)) if a.strip()]
+
+
+def parse_diet(user_preference: str) -> str:
+    """Extract the stated diet from the USER CONTEXT string ('' if none)."""
+    m = _DIET_RE.search(user_preference or "")
+    return m.group(1).strip() if m else ""
 
 
 class ChatPipeline:
@@ -320,6 +328,17 @@ class ChatPipeline:
                 text, thread_id, user_preference, allergens, callbacks, status
             )
 
+        # --- Diet guard: honor the user's diet (vegetarian/vegan/gluten-free/…)
+        # everywhere, not just in meal_planner. Deterministic: re-check each cited
+        # recipe's real ingredients against the diet's forbidden list; only runs
+        # for diets we can enforce by ingredient (unknown diets => no check).
+        diet = parse_diet(user_preference)
+        diet_bans = diet_forbidden_ingredients(diet) if is_restricted(diet) else []
+        if guard and diet_bans and diet_hits(output, diet_bans):
+            output = self._run_diet_guard(
+                text, thread_id, user_preference, diet, diet_bans, callbacks, status
+            )
+
         # --- Never surface LangChain's raw "max iterations" sentinel ---
         if _ITER_LIMIT_SENTINEL in (output or "").lower():
             return ("I couldn't pin that down in a few tries. Could you narrow it a "
@@ -386,3 +405,29 @@ class ChatPipeline:
         return (f"I can't recommend that — the options I found contain {alg}, which "
                 f"you're allergic to. Want me to look for {alg}-free alternatives "
                 f"instead?")
+
+    def _run_diet_guard(self, text, thread_id, user_preference, diet, diet_bans,
+                        callbacks, status) -> str:
+        """A cited recipe breaks the user's diet (e.g. meat in a vegetarian answer):
+        purge that turn and retry once, forcing diet-compliant recipes. If the retry
+        still violates, offer to search compliant options rather than serve it."""
+        forget_last_turn(thread_id)
+        nudge = (
+            f"\n\n[DIET: the user is {diet}. Recommend ONLY {diet}-compliant recipes. "
+            f"Call recipe_lookup with exclude={diet_bans} and suggest ONLY recipes "
+            f"whose ingredients fit a {diet} diet. If the request itself asks for a "
+            f"non-{diet} dish, briefly say so and offer a {diet} alternative instead — "
+            f"do not keep searching.]"
+        )
+        try:
+            status(f"Double-checking this fits a {diet} diet…")
+            retry = self._invoke(self.agent, text + nudge, thread_id, user_preference, callbacks)
+            if _ITER_LIMIT_SENTINEL in (retry or "").lower():
+                raise RuntimeError("iteration limit on diet retry")
+            if not diet_hits(retry, diet_bans):
+                return retry
+            forget_last_turn(thread_id)
+        except Exception:
+            traceback.print_exc()
+        return (f"The options I found aren't fully {diet}-friendly. Want me to search "
+                f"specifically for {diet} recipes instead?")
